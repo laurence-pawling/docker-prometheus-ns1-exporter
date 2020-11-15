@@ -1,9 +1,9 @@
 FROM alpine:3.5
 
 ENTRYPOINT ["python", "-m", "exporter"]
-EXPOSE 9199
+EXPOSE 9198
 ENV FLASK_APP=/exporter/exporter/app.py \
-    SERVICE_PORT=9199
+    SERVICE_PORT=9198
 
 RUN LAYER=build \
   && apk add -U python py-pip \
@@ -13,4 +13,4 @@ RUN LAYER=build \
 
 ADD ./exporter /exporter
 
-LABEL container.name=wehkamp/prometheus-cloudflare-exporter:1.1.1
+LABEL container.name=laurence-pawling/prometheus-ns1-exporter:1.1.1
