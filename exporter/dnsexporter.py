@@ -7,7 +7,7 @@ from prometheus_client.core import GaugeMetricFamily
 from prometheus_client.exposition import generate_latest
 
 
-def process(raw_data, zone):
+def process(raw_data):
     class RegistryMock(object):
         def __init__(self, metrics):
             self.metrics = metrics
@@ -16,30 +16,22 @@ def process(raw_data, zone):
             for metric in self.metrics:
                 yield metric
 
-    def generate_metrics(pop_data, families):
-        dns_data = pop_data['dimensions']
-        rvalue = pop_data['metrics'][0]
-
-        families['record_queried'].add_metric(
-            [zone, dns_data[0], dns_data[1], dns_data[2], dns_data[3]],
-            rvalue)
+    def generate_metrics(dns_data, families):
+        for zone,qps in dns_data.iteritems():
+            families['ns1_dns_qps'].add_metric(
+                [zone], qps)
 
     families = {
-        'record_queried': GaugeMetricFamily(
-            'cloudflare_dns_record_queries',
-            'DNS queries per record at PoP location.',
+        'ns1_dns_qps': GaugeMetricFamily(
+            'ns1_dns_zone_qps',
+            'DNS QPS per zone',
             labels=[
-                'zone',
-                'record_name',
-                'record_type',
-                'query_response',
-                'colo_id'
+                'zone'
             ]
         )
     }
 
-    for pop_data in raw_data:
-        generate_metrics(pop_data, families)
+    generate_metrics(raw_data, families)
     return generate_latest(RegistryMock(families.values()))
 
 
