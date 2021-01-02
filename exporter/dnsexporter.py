@@ -17,9 +17,12 @@ def process(raw_data):
                 yield metric
 
     def generate_metrics(dns_data, families):
-        for zone,qps in dns_data.iteritems():
+        for zone,qps in dns_data['qps'].iteritems():
             families['ns1_dns_qps'].add_metric(
                 [zone], qps)
+        for entry in dns_data['pulsar']:
+            families['ns1_pulsar_decisions_count'].add_metric(
+                [entry['jobid'], entry['name']], entry['value'], entry['timestamp'])
 
     families = {
         'ns1_dns_qps': GaugeMetricFamily(
@@ -28,6 +31,11 @@ def process(raw_data):
             labels=[
                 'zone'
             ]
+        ),
+        'ns1_pulsar_decisions_count': GaugeMetricFamily(
+            'ns1_pulsar_decisions_count',
+            'NS1 Pulsar Decisions',
+            labels=['pulsar_job_id','pulsar_job_name']
         )
     }
 

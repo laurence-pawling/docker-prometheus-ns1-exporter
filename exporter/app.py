@@ -38,6 +38,7 @@ HEADERS = {
 }
 HTTP_SESSION = requests.Session()
 
+last_reported = 0
 
 class RegistryMock(object):
     def __init__(self, metrics):
@@ -63,6 +64,23 @@ def get_zone_list():
     return zones
 
 
+def get_job_list():
+    jobs = {}
+    logging.info('Getting list of Pulsar apps for account')
+    r_apps = get_data_from_ns1(url='%s/pulsar/apps' % (ENDPOINT))
+    for app in r_apps:
+        logging.info('Getting list of jobs of app id %s' % (app['appid']))
+        r_jobs = get_data_from_ns1(url='%s/pulsar/apps/%s/jobs' % (ENDPOINT, app['appid']))
+        for job in r_jobs:
+            jobs[job['jobid']] = {
+                'name': job['name'],
+                'appid': app['appid'],
+                'active': job['active']
+            }
+    return jobs
+
+
+
 def metric_processing_time(name):
     def decorator(func):
         # @wraps(func)
@@ -79,7 +97,9 @@ def metric_processing_time(name):
 
 
 @metric_processing_time('dns')
-def get_dns_metrics(zones):
+def get_dns_metrics(zones, jobs):
+    global last_reported
+
     logging.info('Fetching NS1 QPS metrics data')
     endpoint = '%s/stats/qps/%s'
     zone_qps = {}
@@ -93,11 +113,43 @@ def get_dns_metrics(zones):
             logging.debug('Recorded %s QPS for zone %s' % (r['qps'], zone))
             zone_qps[zone] = int(r['qps'])
 
-    return dnsexporter.process(zone_qps)
+    window_start_seconds = 900
+    safety_delay_seconds = 30
+
+    logging.info('Fetching NS1 Decision data')
+    pulsar_decisions = {}
+    # Let's assume that values won't change once they're (default 30s) old
+    timestamp_now = time.time()
+    timestamp_safe = timestamp_now - safety_delay_seconds
+    r = get_data_from_ns1('%s/pulsar/query/decision/customer?period=%ds' % (ENDPOINT, window_start_seconds))
+    decisions = []
+    if 'graphs' not in r:
+        logging.error('Failed to get information from NS1')
+        logging.error('message: %s' % (r['message']))
+    else:
+        local_max_timestamp = last_reported
+        for graph in r['graphs']:
+            jobid = graph['tags']['jobid']
+            name = jobs[jobid]['name']
+            for pair in graph['graph']:
+                timestamp = pair[0]
+                if timestamp > last_reported and timestamp < timestamp_safe:
+                    decisions.append({
+                        'jobid':jobid,
+                        'name':name,
+                        'timestamp':timestamp,
+                        'value':pair[1]
+                    })
+                    if timestamp > local_max_timestamp:
+                        local_max_timestamp = timestamp
+        last_reported = local_max_timestamp
+
+    return dnsexporter.process({'qps':zone_qps, 'pulsar':decisions})
+
 
 
 def update_latest():
-    global latest_metrics, internal_metrics, zones
+    global latest_metrics, internal_metrics, zones, last_reported, jobs
     internal_metrics = {
         'processing_time': GaugeMetricFamily(
             'ns1_exporter_processing_time_miliseconds',
@@ -108,7 +160,7 @@ def update_latest():
         )
     }
 
-    latest_metrics = (get_dns_metrics(zones))
+    latest_metrics = (get_dns_metrics(zones, jobs))
     latest_metrics += generate_latest(RegistryMock(internal_metrics.values()))
 
 
@@ -134,11 +186,13 @@ def metrics():
 
 
 def run():
-    global zones
+    global zones, jobs
 
     logging.info('Starting scrape service ')
 
+    # TODO: Periodic update of zone list and job list
     zones = get_zone_list()
+    jobs = get_job_list()
 
     update_latest()
 
@@ -148,5 +202,6 @@ def run():
 
     try:
         app.run(host="0.0.0.0", port=SERVICE_PORT, threaded=True)
+
     finally:
         scheduler.shutdown()
